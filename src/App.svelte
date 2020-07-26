@@ -70,14 +70,18 @@
   $: D_hospital_lag    = 5
   $: D_death           = Time_to_death - D_infectious 
   $: CFR               = 0.02  
-  $: InterventionTime  = 100  
+  $: InterventionTime  = 100
   $: OMInterventionAmt = 2/3
   $: InterventionAmt   = 1 - OMInterventionAmt
+  $: InterventionTime2  = 175
+  $: OMInterventionAmt2 = 2/3
+  $: InterventionAmt2   = 1 - OMInterventionAmt2
   $: Time              = 220
   $: Xmax              = 110000
   $: dt                = 2
   $: P_SEVERE          = 0.2
-  $: duration          = 7*12*1e10
+  $: duration          = 15
+  $: duration2          = 15
 
   $: state = location.protocol + '//' + location.host + location.pathname + "?" + queryString.stringify({"Time_to_death":Time_to_death,
                "logN":logN,
@@ -90,12 +94,21 @@
                "CFR":CFR,
                "InterventionTime":InterventionTime,
                "InterventionAmt":InterventionAmt,
+               "InterventionTime2":InterventionTime2,
+               "InterventionAmt2":InterventionAmt2,
                "D_hospital_lag":D_hospital_lag,
+    "duration":duration,
+    "duration2":duration2,
                "P_SEVERE": P_SEVERE})
 
 // dt, N, I0, R0, D_incbation, D_infectious, D_recovery_mild, D_hospital_lag, D_recovery_severe, D_death, P_SEVERE, CFR, InterventionTime, InterventionAmt, duration
 
-  function get_solution(dt, N, I0, R0, D_incbation, D_infectious, D_recovery_mild, D_hospital_lag, D_recovery_severe, D_death, P_SEVERE, CFR, InterventionTime, InterventionAmt, duration) {
+  function get_solution(
+          dt, N, I0, R0,
+          D_incbation, D_infectious, D_recovery_mild, D_hospital_lag, D_recovery_severe, D_death,
+          P_SEVERE, CFR,
+          InterventionTime, InterventionAmt, duration,
+          InterventionTime2, InterventionAmt2, duration2) {
 
     var interpolation_steps = 40
     var steps = 110*interpolation_steps
@@ -106,11 +119,30 @@
     function f(t, x){
 
       // SEIR ODE
-      if (t > InterventionTime && t < InterventionTime + duration){
+
+      // compute beta.
+      // five possible states: a) before intervention1, b) during intervention 1,
+      // c) between interventions, d) during intervention 2, e) after intervention2.
+      // assumes interventions do not overlap
+      //                   I1                  I2
+      //         +---------+---------+---------+----------+----------+
+      //         |    a    |    b    |    c    |     d    |    e     |
+      //         +---------+---------+---------+----------+----------+
+
+      if (t > InterventionTime && t < InterventionTime + duration) {
+        // state b
         var beta = (InterventionAmt)*R0/(D_infectious)
-      } else if (t > InterventionTime + duration) {
-        var beta = 0.5*R0/(D_infectious)        
+      } else if (t > InterventionTime + duration && t < InterventionTime2) {
+        // state c
+        var beta = 0.5*R0/(D_infectious)
+      } else if (t > InterventionTime2 && t < InterventionTime2 + duration2) {
+        // state d
+        var beta = (InterventionAmt2)*R0/(D_infectious)
+      } else if (t > InterventionTime2 + duration2) {
+        // state e
+        var beta = 0.5*R0/(D_infectious)
       } else {
+        // state a
         var beta = R0/(D_infectious)
       }
       var a     = 1/D_incbation
@@ -165,7 +197,7 @@
       t+=dt
     }
     return {"P": P, 
-            "deaths": N*v[6], 
+            "deaths": N*v[9], 
             "total": 1-v[0],
             "total_infected": TI,
             "Iters":Iters,
@@ -176,7 +208,7 @@
     return P.reduce((max, b) => Math.max(max, sum(b, checked) ), sum(P[0], checked) )
   }
 
-  $: Sol            = get_solution(dt, N, I0, R0, D_incbation, D_infectious, D_recovery_mild, D_hospital_lag, D_recovery_severe, D_death, P_SEVERE, CFR, InterventionTime, InterventionAmt, duration)
+  $: Sol            = get_solution(dt, N, I0, R0, D_incbation, D_infectious, D_recovery_mild, D_hospital_lag, D_recovery_severe, D_death, P_SEVERE, CFR, InterventionTime, InterventionAmt, duration, InterventionTime2, InterventionAmt2, duration2)
   $: P              = Sol["P"].slice(0,100)
   $: timestep       = dt
   $: tmax           = dt*100
@@ -232,7 +264,7 @@
     var InterventionTimeStart = 0
 
     var dragstarted = function (d) {
-      dragstarty = event.x  
+      dragstarty = event.x
       InterventionTimeStart = InterventionTime
       Plock = Pmax
       lock = true
@@ -242,6 +274,30 @@
       // InterventionTime = Math.max( (*(1 + (event.x - dragstarty)/500)), 10)
       // console.log(event.x)
       InterventionTime = Math.min(tmax-1, Math.max(0, InterventionTimeStart + xScaleTimeInv(event.x - dragstarty)))
+    }
+
+    var dragend = function (d) {
+      lock = false
+    }
+
+    return drag().on("drag", dragged).on("start", dragstarted).on("end", dragend)
+  }
+
+  var drag_intervention2 = function (){
+    var dragstarty = 0
+    var InterventionTimeStart = 0
+
+    var dragstarted = function (d) {
+      dragstarty = event.x
+      InterventionTimeStart = InterventionTime2
+      Plock = Pmax
+      lock = true
+    }
+
+    var dragged = function (d) {
+      // InterventionTime = Math.max( (*(1 + (event.x - dragstarty)/500)), 10)
+      // console.log(event.x)
+      InterventionTime2 = Math.min(tmax-1, Math.max(InterventionTime+1, InterventionTimeStart + xScaleTimeInv(event.x - dragstarty)))
     }
 
     var dragend = function (d) {
@@ -284,8 +340,9 @@
     var drag_callback_x = drag_x()
     drag_callback_x(selectAll("#xAxisDrag"))
     var drag_callback_intervention = drag_intervention()
-    // drag_callback_intervention(selectAll("#interventionDrag"))
     drag_callback_intervention(selectAll("#dottedline"))
+    var drag_callback_intervention2 = drag_intervention2()
+    drag_callback_intervention2(selectAll("#dottedline2"))
     // var drag_callback_intervention_end = drag_intervention_end()
     // drag_callback_intervention_end(selectAll("#dottedline2"))
 
@@ -301,7 +358,11 @@
       if (!(parsed.CFR === undefined)) {CFR = parseFloat(parsed.CFR)}
       if (!(parsed.InterventionTime === undefined)) {InterventionTime = parseFloat(parsed.InterventionTime)}
       if (!(parsed.InterventionAmt === undefined)) {InterventionAmt = parseFloat(parsed.InterventionAmt)}
+      if (!(parsed.InterventionTime2 === undefined)) {InterventionTime2 = parseFloat(parsed.InterventionTime2)}
+      if (!(parsed.InterventionAmt2 === undefined)) {InterventionAmt2 = parseFloat(parsed.InterventionAmt2)}
       if (!(parsed.D_hospital_lag === undefined)) {D_hospital_lag = parseFloat(parsed.D_hospital_lag)}
+      if (!(parsed.duration === undefined)) {duration = parseFloat(parsed.duration)}
+      if (!(parsed.duration2 === undefined)) {duration = parseFloat(parsed.duration2)}
       if (!(parsed.P_SEVERE === undefined)) {P_SEVERE = parseFloat(parsed.P_SEVERE)}
       if (!(parsed.Time_to_death === undefined)) {Time_to_death = parseFloat(parsed.Time_to_death)}
 
@@ -791,13 +852,13 @@
                     height:{height+19}px">
 
         <div style="position:absolute; opacity: 0.5; top:-5px; left:10px; width: 120px">
-        <span style="font-size: 13px">{@html math_inline("\\mathcal{R}_t=" + (R0*InterventionAmt).toFixed(2) )}</span> ⟶ 
+        <span style="font-size: 13px">{@html math_inline("\\mathcal{R}_t=" + (R0*InterventionAmt).toFixed(2) )}</span> ⟶
         </div>
 
         {#if xScaleTime(InterventionTime) >= 100}
           <div style="position:absolute; opacity: 0.5; top:-2px; left:-97px; width: 120px">
           <span style="font-size: 13px">⟵ {@html math_inline("\\mathcal{R}_0=" + (R0).toFixed(2) )}</span>
-          </div>      
+          </div>
         {/if}
 
         <div id="interventionDrag" class="legendtext" style="flex: 0 0 160px; width:120px; position:relative;  top:-70px; height: 60px; padding-right: 15px; left: -125px; pointer-events: all;cursor:col-resize;" >
@@ -809,7 +870,7 @@
               <g transform="rotate(90)">
                 <g transform="translate(0,-20)">
                   <path d="M2 11h16v2H2zm0-4h16v2H2zm8 11l3-3H7l3 3zm0-16L7 5h6l-3-3z"/>
-                 </g>  
+                 </g>
               </g>
             </svg>
           </div>
@@ -837,7 +898,7 @@
             cursor:col-resize;
             height:{height}px">
             <div style="flex: 0 0 160px; width:200px; position:relative; top:-125px; left: 1px" >
-              <div class="caption" style="pointer-events: none; position: absolute; left:0; top:40px; width:150px; border-left: 2px solid #777; padding: 5px 7px 7px 7px; ">      
+              <div class="caption" style="pointer-events: none; position: absolute; left:0; top:40px; width:150px; border-left: 2px solid #777; padding: 5px 7px 7px 7px; ">
               <div class="paneltext"  style="height:20px; text-align: right">
               <div class="paneldesc">to decrease transmission by<br></div>
               </div>
@@ -850,7 +911,81 @@
           </div>
       </div>
 
-<!-- 
+      <!-- Intervention2 Line -->
+      <div style="position: absolute; width:{width+15}px; height: {height}px; position: absolute; top:100px; left:10px; pointer-events: none">
+        <div id="dottedline2"  style="pointer-events: all;
+                    position: absolute;
+                    top:-38px;
+                    left:{xScaleTime(InterventionTime2)}px;
+                    visibility: {(xScaleTime(InterventionTime2) < (width - padding.right)) ? 'visible':'hidden'};
+                    width:2px;
+                    background-color:#FFF;
+                    border-right: 1px dashed black;
+                    pointer-events: all;
+                    cursor:col-resize;
+                    height:{height+19}px">
+
+        <div style="position:absolute; opacity: 0.5; top:-5px; left:10px; width: 120px">
+        <span style="font-size: 13px">{@html math_inline("\\mathcal{R}_t=" + (R0*InterventionAmt2).toFixed(2) )}</span> ⟶
+        </div>
+
+        {#if xScaleTime(InterventionTime2) >= 100}
+          <div style="position:absolute; opacity: 0.5; top:-2px; left:-97px; width: 120px">
+          <span style="font-size: 13px">⟵ {@html math_inline("\\mathcal{R}_0=" + (R0).toFixed(2) )}</span>
+          </div>
+        {/if}
+
+        <div id="interventionDrag" class="legendtext" style="flex: 0 0 160px; width:120px; position:relative;  top:-70px; height: 60px; padding-right: 15px; left: -125px; pointer-events: all;cursor:col-resize;" >
+          <div class="paneltitle" style="top:9px; position: relative; text-align: right">Intervention on day {format("d")(InterventionTime2)}</div>
+          <span></span><div style="top:9px; position: relative; text-align: right">
+          (drag me)</div>
+          <div style="top:43px; left:40px; position: absolute; text-align: right; width: 20px; height:20px; opacity: 0.3">
+            <svg width="20" height="20">
+              <g transform="rotate(90)">
+                <g transform="translate(0,-20)">
+                  <path d="M2 11h16v2H2zm0-4h16v2H2zm8 11l3-3H7l3 3zm0-16L7 5h6l-3-3z"/>
+                 </g>
+              </g>
+            </svg>
+          </div>
+        </div>
+
+
+        <div style="width:150px; position:relative; top:-85px; height: 80px; padding-right: 15px; left: 0px; ;cursor:col-resize; background-color: white; position:absolute" >
+
+        </div>
+
+
+        </div>
+      </div>
+
+      <!-- Intervention2 Line slider -->
+      <div style="position: absolute; width:{width+15}px; height: {height}px; position: absolute; top:120px; left:10px; pointer-events: none">
+        <div style="
+            position: absolute;
+            top:-38px;
+            left:{xScaleTime(InterventionTime2)}px;
+            visibility: {(xScaleTime(InterventionTime2) < (width - padding.right)) ? 'visible':'hidden'};
+            width:2px;
+            background-color:#FFF;
+            border-right: 1px dashed black;
+            cursor:col-resize;
+            height:{height}px">
+            <div style="flex: 0 0 160px; width:200px; position:relative; top:-125px; left: 1px" >
+              <div class="caption" style="pointer-events: none; position: absolute; left:0; top:40px; width:150px; border-left: 2px solid #777; padding: 5px 7px 7px 7px; ">
+              <div class="paneltext"  style="height:20px; text-align: right">
+              <div class="paneldesc">to decrease transmission by<br></div>
+              </div>
+              <div style="pointer-events: all">
+              <div class="slidertext" on:mousedown={lock_yaxis}>{(100*(1-InterventionAmt2)).toFixed(2)}%</div>
+              <input class="range" type=range bind:value={OMInterventionAmt2} min=0 max=1 step=0.01 on:mousedown={lock_yaxis}>
+              </div>
+              </div>
+            </div>
+          </div>
+      </div>
+
+    <!--
       {#if xScaleTime(InterventionTime+duration) < (width - padding.right)}
         <div id="dottedline2" style="position: absolute; width:{width+15}px; height: {height}px; position: absolute; top:105px; left:10px; pointer-events: none;">
           <div style="
@@ -895,8 +1030,8 @@
               </div>
             </div>
         </div>
-      {/if} -->
-
+      {/if}
+-->
 
       <div style="pointer-events: none;
                   position: absolute;
@@ -992,6 +1127,16 @@
       <div class="paneldesc" style="height:29px; border-top: 1px solid #EEE; padding-top: 10px">Time to hospitalization.<br></div>
       <div class="slidertext">{D_hospital_lag} Days</div>
       <input class="range" type=range bind:value={D_hospital_lag} min={0.5} max=100 step=0.01>
+    </div>
+
+    <div class="column">
+      <div class="paneltitle">Interventions</div>
+      <div class="paneldesc" style="height:29px;">Duration of Intervention<br></div>
+      <div class="slidertext">{duration} Days</div>
+      <input class="range" type=range bind:value={duration} min={0.5} max=100 step=0.01>
+      <div class="paneldesc" style="height:29px; border-top: 1px solid #EEE; padding-top: 10px">Duration of Intervention2<br></div>
+      <div class="slidertext">{duration2} Days</div>
+      <input class="range" type=range bind:value={duration2} min={0.5} max=100 step=0.01>
     </div>
 
   </div>
